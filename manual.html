@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <meta name="author" content="Eric Johnson" />
+  <title>Computer Graphics Term Project: 3D Fractal Renderer</title>
+  <style type="text/css">
+      code{white-space: pre-wrap;}
+      span.smallcaps{font-variant: small-caps;}
+      span.underline{text-decoration: underline;}
+      div.column{display: inline-block; vertical-align: top; width: 50%;}
+  </style>
+  <link rel="stylesheet" href="manual.css" />
+  <!--[if lt IE 9]>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/html5shiv/3.7.3/html5shiv-printshiv.min.js"></script>
+  <![endif]-->
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">Computer Graphics Term Project: 3D Fractal Renderer</h1>
+<p class="author">Eric Johnson</p>
+</header>
+<p>Some notes on performance:</p>
+<ul>
+<li>This program can get <em>very</em> GPU-intensive, and may hang or crash on weaker GPUs. If the entire screen goes cyan, then WebGL has crashed.</li>
+<li>The Mandelbox is generally more taxing than the Mandelbulb, and I typically get a max of 15-20fps on an Nvidia 1050Ti while navigating through it.</li>
+<li>The program will only render when it has to. If the user isn’t moving around or changing parameters, then it won’t try to redraw.</li>
+</ul>
+<h1 id="background">Background</h1>
+<p>I chose to use distance-estimated ray-marching (also called sphere tracing) to render the fractals. This is an image-space method that runs in the fragment shader. It was first proposed by Hart, Sandin, and Kauffman in a paper presented at SIGGRAPH ’89 <span class="citation" data-cites="Hart:1989:RTD:74333.74363">[<a href="#ref-Hart:1989:RTD:74333.74363">1</a>]</span>, and further developed by Hart in <span class="citation" data-cites="hart1996">[<a href="#ref-hart1996">2</a>]</span>.</p>
+<p>The core algorithm uses a “distance estimator” function that computes the distance from any point to the closest surface of the object. Starting from the camera position, we cast a ray through the current pixel, then calculate the distance to the fractal. We step along the ray by some percentage of that distance, and repeat until the distance falls below some tolerance, or we reach some maximum iteration count (to prevent infinite loops if the tolerance is below machine epsilon, for example).</p>
+<p>Overall, this is a very simple algorithm, and the only real parameters to tweak are:</p>
+<ul>
+<li>how much of the distance estimate to step (adjust with <a href="#stepMult">stepMult</a>)</li>
+<li>the tolerance for reaching the surface (adjust with <a href="#precision">precision</a>)</li>
+<li>the maximum number of iterations to take (adjust with <a href="#marchIters">marchIters</a>)</li>
+</ul>
+<h2 id="tolerance-calculation">Tolerance Calculation</h2>
+<p>Instead of using a fixed tolerance for the entire image, we dynamically calculate the tolerance based on how large the current pixel is when projected into world space. Effectively, we use a larger tolerance for surfaces that are far away from the camera, and a smaller tolerance for closer ones. This is a much simpler setting to present to the user, and works well at most distances. However, it can cause small holes to be filled in, which will open up as the camera gets closer. This can be seen on the surface of the Mandelbox.</p>
+<p>We do the same when calculating normals for lighting and ambient occlusion. This greatly reduces noise on uneven surfaces, as shown <a href="#aliasing-comparison">here</a>.</p>
+<h2 id="ambient-occlusion">Ambient Occlusion</h2>
+<p>The ambient occlusion algorithm was originally developed by Inigo Quilez for demoscene productions, and uses relatively few function evaluations. My implementation follows the algorithm specified in <span class="citation" data-cites="gpu-ray-marching">[<a href="#ref-gpu-ray-marching">3</a>]</span>.</p>
+<p>From each point, we take fixed steps along the normal. At each step, we calculate the minimum distance to a surface, and compare it to the distance from the original point. If the actual distance is lower, then there’s some other surface nearby, and that means the original point should be occluded. This is repeated for 5 steps, with the contribution from each step decreasing exponentially.</p>
+<p>The <a href="#aoStep">aoStep</a> setting controls the length of these steps.</p>
+<h1 id="user-guide">User Guide</h1>
+<p>When the program first starts, you are presented with a view of the Mandelbulb fractal. If the window is resized, the viewport will resize to fill it.</p>
+<h2 id="controls">Controls</h2>
+<p>The keyboard and mouse are used to move the camera around. When the canvas is clicked, the mouse will be captured: the pointer will disappear and can be moved freely without worrying about leaving the window. The mouse wheel or the “+” and “-” keys will adjust the camera’s movement speed, via the <a href="#moveSpeed">moveSpeed</a> setting. Scrolling up (+) will increase the speed, and scrolling down (-) will decrease it.</p>
+<p>The “O” key will toggle between the two modes.</p>
+<h3 id="free-camera-mode">Free camera mode</h3>
+<p>W and S move the camera forward and backward, A and D strafe left and right, and Q and E move up and down, respectively.</p>
+<p>Clicking and dragging on the canvas will rotate the camera with the mouse movement: moving the mouse up will look up, moving the mouse right will look right, etc. This can be configured in the <a href="#controls-settings">Controls</a> folder of the menu.</p>
+<h3 id="orbit-mode">Orbit mode</h3>
+<p>W and S move the camera closer and further from the origin, A and D rotate the camera around the vertical axis, and Q and E rotate around the horizontal axis. The mouse does nothing in this mode.</p>
+<h2 id="configuration">Configuration</h2>
+<p>At the top of the configuration menu, there are several buttons related to preset configurations. From left to right:</p>
+<ul>
+<li>The dropdown menu switches between presets. By selecting one, the current configuration is overwritten with the preset.</li>
+<li>The gear button brings up a modal window that contains a JSON dump of all the presets. This can be placed in the code to add new presets for anyone who uses the program (replace the contents of the variable <code>saveData</code> at the top of fractal.js). You can also enable saving to <code>localStorage</code> instead, which might be a bit unstable, and won’t save changes for any other users or browsers, but doesn’t require modifying the JS files.</li>
+<li>The “Save” button will save the current settings to the selected preset.</li>
+<li>The “New” button will create a new preset and save the current settings to it.</li>
+<li>The “Revert” button will overwrite the current configuration with the selected preset.</li>
+<li>The “Help” button opens this page.</li>
+</ul>
+<h3 id="main-settings">Main settings</h3>
+<dl>
+<dt><span id="fractal"><strong>fractal</strong></span></dt>
+<dd>The fractal type; either Mandelbulb or Mandelbox.
+</dd>
+<dt><span id="precision"><strong>precision</strong></span></dt>
+<dd>A multiplier for the ray-marcher epsilon. Smaller values make the render less detailed. See <a href="#tolerance-calculation">above</a> for more information.
+</dd>
+<dt><span id="stepMult"><strong>stepMult</strong></span></dt>
+<dd>What percentage of the distance estimate to step for each iteration. If this is set above one, the ray-marcher can miss small features, and sometimes just breaks outright. If surfaces distort or clip when you move the camera, try decreasing this.
+</dd>
+<dt><span id="marchIters"><strong>marchIters</strong></span></dt>
+<dd>The maximum number of iterations the ray-marcher will take before bailing out. In the iteration count rendering mode, these pixels will be colored with full brightness, and will be black in the other modes.
+</dd>
+<dt><span id="moveSpeed"><strong>moveSpeed</strong></span></dt>
+<dd><p>The distance to move the camera in one frame, on a logarithmic scale (base 10). When set to 0, then the camera will move 0.02 units per frame. If set to 1, it will move <span class="math inline">10<sup>1</sup> = 10</span> times faster; if set to -1, it will move <span class="math inline">10<sup> − 1</sup> = 0.1</span> times faster, and so on.</p>
+<p>This should logically go in the Controls section, but I’ve placed it in the main section since I find myself needing it a lot while flying around. It is not saved in the configuration sets.</p>
+</dd>
+</dl>
+<h3 id="mandelbulb-settings">Mandelbulb settings</h3>
+<dl>
+<dt><span id="bulbPower"><strong>bulbPower</strong></span></dt>
+<dd>The power to use in the Mandelbulb formula; integer values have (n-1)-fold rotational symmetry about the axis.
+</dd>
+<dt><span id="bulbIters"><strong>bulbIters</strong></span></dt>
+<dd>The maximum number of iterations to use in the escape-time algorithm.
+</dd>
+<dt><span id="bulbBailout"><strong>bulbBailout</strong></span></dt>
+<dd>The bailout threshold for the escape-time algorithm, used to determine if the current iteration will escape to infinity.
+</dd>
+</dl>
+<h3 id="mandelbox-settings">Mandelbox settings</h3>
+<dl>
+<dt><span id="boxScale"><strong>boxScale</strong></span></dt>
+<dd>How much to scale space after each iteration.
+</dd>
+<dt><span id="boxIters"><strong>boxIters</strong></span></dt>
+<dd>The number of times to repeat the transformation.
+</dd>
+<dt><span id="boxMinRadius"><strong>boxMinRadius</strong></span></dt>
+<dd>The minimum radius used in the sphere fold.
+</dd>
+</dl>
+<h3 id="renderer-settings">Renderer settings</h3>
+<dl>
+<dt><span id="fov"><strong>fov</strong></span></dt>
+<dd>The vertical field of view to use for the viewport.
+</dd>
+<dt><span id="maxDist"><strong>maxDist</strong></span></dt>
+<dd>The maximum distance to ray-march. Anything beyond this distance will be treated as background.
+</dd>
+<dt><span id="renderMode"><strong>renderMode</strong></span></dt>
+<dd><ul>
+<li>Iter count: pixels are colored by the number of iterations the ray-marcher needed to reach the surface.</li>
+<li>Lighting: simple Phong lighting without ambient occlusion.</li>
+<li>AO only: ambient occlusion of surfaces</li>
+<li>Lighting+AO: Phong lighting in addition to ambient occlusion.</li>
+</ul>
+</dd>
+<dt><span id="iterOverride"><strong>iterOverride</strong></span></dt>
+<dd>If this is set to a value other than -1, then the iteration count mode will use this as the max iteration count instead of the actual maximum (marchIters). Useful if the scene is too dark using the actual value.
+</dd>
+<dt><span id="iterColor"><strong>iterColor</strong></span></dt>
+<dd>The color to use for iteration count mode.
+</dd>
+<dt><span id="aoStep"><strong>aoStep</strong></span></dt>
+<dd>The distance to step when estimating ambient occlusion (<a href="#ambient-occlusion">more info</a>)
+</dd>
+<dt><span id="aoScale"><strong>aoScale</strong></span></dt>
+<dd>The strength of the darkening from ambient occlusion.
+</dd>
+</dl>
+<h3 id="controls-settings">Controls settings</h3>
+<p>None of these settings are saved with the configuration sets, since they are largely user-specific.</p>
+<dl>
+<dt><span id="orbit"><strong>orbit</strong></span></dt>
+<dd>Switch between free camera and orbit modes. Can be toggled with “O”.
+</dd>
+<dt><span id="invertX"><strong>invertX</strong></span></dt>
+<dd>Invert the X-axis mouse controls, so that moving the mouse right makes the camera rotate to the left (CCW).
+</dd>
+<dt><span id="invertY"><strong>invertY</strong></span></dt>
+<dd>Invert the Y-axis mouse controls, so that moving the mouse up makes the camera rotate down.
+</dd>
+<dt><span id="invertScroll"><strong>invertScroll</strong></span></dt>
+<dd>Invert the mouse wheel, so that scrolling up increases <a href="#moveSpeed">moveSpeed</a>.
+</dd>
+</dl>
+<h1 id="examples">Examples</h1>
+<p>This section shows some images created with the preset configurations.</p>
+<figure>
+<img src="images/mandelbulb.png" alt="Mandelbulb with lighting and ambient occlusion" id="img-mandelbulb" style="height:40.0%" width="960" /><figcaption>Mandelbulb with lighting and ambient occlusion</figcaption>
+</figure>
+<figure>
+<img src="images/broccoli-trees.png" alt="Broccoli Trees" id="img-broccoli-trees" style="height:40.0%" width="960" /><figcaption>Broccoli Trees</figcaption>
+</figure>
+<figure>
+<img src="images/pretty-mandelbox.png" alt="Mandelbox in iteration count mode" id="img-mandelbox" style="height:40.0%" width="960" /><figcaption>Mandelbox in iteration count mode</figcaption>
+</figure>
+<figure>
+<img src="images/orb.png" alt="Recursive Orb" id="img-orb" style="height:40.0%" width="960" /><figcaption>Recursive Orb</figcaption>
+</figure>
+<figure>
+<img src="images/negative-mandelbox.png" alt="Negative Mandelbox" id="img-negative-mandelbox" style="height:40.0%" width="960" /><figcaption>Negative Mandelbox</figcaption>
+</figure>
+<figure>
+<img src="images/sparse-mandelbox-trees.png" alt="Sparse Mandelbox Trees" id="img-sparse-trees" style="height:40.0%" width="960" /><figcaption>Sparse Mandelbox Trees</figcaption>
+</figure>
+<figure>
+<img src="images/negative-mandelbox-2.png" alt="Negative Mandelbox 2" id="img-negative-mandelbox-2" style="height:40.0%" width="960" /><figcaption>Negative Mandelbox 2</figcaption>
+</figure>
+<figure>
+<img src="images/quantization.png" alt="Quantization artifacts appear at very small scales, due to floating point precision limits." id="img-quantization" style="height:40.0%" width="960" /><figcaption>Quantization artifacts appear at very small scales, due to floating point precision limits.</figcaption>
+</figure>
+
+<h2 id="precision-and-aliasing-noise">Precision and Aliasing Noise</h2>
+<p>High precision, lots of noise (click to open full-size image):<br />
+<a href="images/precision-3.0.png"><img src="images/precision-3.0.png" alt="High precision, lots of noise" id="img-precision-high" width="960" /></a></p>
+<p>Normal precision, little noise:<br />
+<a href="images/precision-1.0.png"><img src="images/precision-1.0.png" alt="Normal precision, little noise" id="img-precision-normal" width="960" /></a></p>
+<p>Low precision, no noise:<br />
+<a href="images/precision-0.5.png"><img src="images/precision-0.5.png" alt="Low precision, no noise" id="img-precision-low" width="960" /></a></p>
+<h1 id="references" class="unnumbered">References</h1>
+<div id="refs" class="references">
+<div id="ref-Hart:1989:RTD:74333.74363">
+<p>[1] J. C. Hart, D. J. Sandin, and L. H. Kauffman, “Ray tracing deterministic 3-d fractals,” in <em>Proceedings of the 16th annual conference on computer graphics and interactive techniques</em>, 1989, pp. 289–296.</p>
+</div>
+<div id="ref-hart1996">
+<p>[2] J. C. Hart, “Sphere tracing: A geometric method for the antialiased ray tracing of implicit surfaces,” <em>The Visual Computer</em>, vol. 12, no. 10, pp. 527–545, 1996.</p>
+</div>
+<div id="ref-gpu-ray-marching">
+<p>[3] L. J. Tomczak, “GPU ray marching of distance fields,” Master’s thesis, Technical University of Denmark, DTU Informatics, E-mail: reception@imm.dtu.dk, Asmussens Alle, Building 305, DK-2800 Kgs. Lyngby, Denmark, 2012.</p>
+</div>
+</div>
+</body>
+</html>
